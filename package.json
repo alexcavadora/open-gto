@@ -1,0 +1,14 @@
+{
+    "name": "open-gto",
+    "version": "1.0.0",
+    "description": "Weather data mirror API for Guanajuato using MongoDB and OpenMeteo",
+    "main": "app.js",
+    "type": "module",
+    "scripts": {
+      "start": "node app.js"
+    },
+    "dependencies": {
+      "mongodb": "^5.3.0"
+    }
+}
+  
