@@ -301,6 +301,32 @@ async function fetchAllCitiesHistoricalData() {
   console.log("Completed historical data fetch for all cities");
 }
 
+// Fetch historical weather data from MongoDB
+async function getHistoricalData() {
+  try {
+    // Imprimir todas las colecciones disponibles en la base de datos
+    const collections = await db.listCollections().toArray();
+    console.log("Colecciones disponibles:", collections.map(col => col.name));
+
+    // Acceder directamente a la colección 'historicalWeather'
+    const collectionName = 'historicalWeather';
+    console.log("Usando la colección:", collectionName);
+
+    // Obtener la colección específica
+    const collection = db.collection(collectionName);
+
+    // Buscar datos históricos
+    const historicalData = await collection.find({}).toArray();
+    console.log("Datos históricos encontrados:", historicalData);
+
+    return historicalData;
+  } catch (error) {
+    console.error("Error al obtener datos históricos:", error);
+    throw error;
+  }
+}
+
+
 // Create HTTP server
 const server = createServer(async (req, res) => {
   // Enable CORS
@@ -319,6 +345,19 @@ const server = createServer(async (req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "OK" }));
+    return;
+  }
+
+   // Fetch historical data endpoint
+   if (req.url === "/api/get-historicaldata" && req.method === "GET") {
+    try {
+      const historicalData = await getHistoricalData();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ historicalData }));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to retrieve historical data" }));
+    }
     return;
   }
 
@@ -431,6 +470,7 @@ const server = createServer(async (req, res) => {
           weather: "/api/weather?lat={latitude}&lon={longitude}",
           historical: "/api/fetch-historical (POST)",
           health: "/health",
+          historicalData: "/api/get-historicaldata",
         },
       }),
     );
