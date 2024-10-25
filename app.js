@@ -17,7 +17,6 @@ let db;
 async function connectDB() {
   await client.connect();
   db = client.db("weatherData");
-  // Index for efficient queries by city and timestamp
   await db.collection("weather").createIndex({
     cityId: 1,
     "currentReadings.timestamp": -1,
@@ -77,11 +76,9 @@ const server = createServer(async (req, res) => {
         longitude: parseFloat(params.get("lon")),
       };
 
-      // Find the city in our known cities map
       const coordKey = `${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`;
       const cityInfo = cityCoordinatesMap.get(coordKey);
 
-      // Fetch current weather forecast
       const weather = await fetchWeather(
         config.openMeteo.current,
         `/v1/forecast?latitude=${coords.latitude}&longitude=${coords.longitude}&current_weather=true&timezone=auto`,
@@ -90,14 +87,12 @@ const server = createServer(async (req, res) => {
       if (cityInfo) {
         const timestamp = new Date();
 
-        // Extract current readings from the weather data
         const currentReading = {
           timestamp,
           temperature: weather.current_weather.temperature,
           pressure: weather.current_weather.surface_pressure,
         };
 
-        // Update or create the city document with the new reading
         await db.collection("weather").updateOne(
           { cityId: cityInfo.id },
           {
@@ -105,12 +100,12 @@ const server = createServer(async (req, res) => {
               cityName: cityInfo.name,
               lat: coords.latitude,
               lon: coords.longitude,
-              historicalData: [], // Array to store historical hourly data
+              historicalData: [],
             },
             $push: {
               currentReadings: {
                 $each: [currentReading],
-                $position: 0, // Add new readings at the start of the array
+                $position: 0,
               },
             },
           },
@@ -148,7 +143,6 @@ const server = createServer(async (req, res) => {
               }),
             );
 
-            // Update the city document with historical data
             await db.collection("weather").updateOne(
               { cityId: city.id },
               {
@@ -156,7 +150,7 @@ const server = createServer(async (req, res) => {
                   cityName: city.name,
                   lat: city.coord.lat,
                   lon: city.coord.lon,
-                  currentReadings: [], // Array to store current readings
+                  currentReadings: [],
                 },
                 $push: {
                   historicalData: {
