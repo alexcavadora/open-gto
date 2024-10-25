@@ -17,7 +17,11 @@ let db;
 async function connectDB() {
   await client.connect();
   db = client.db("weatherData");
-  await db.collection("weather").createIndex({ lat: 1, lon: 1, date: -1 });
+  // Index for efficient queries by city and timestamp
+  await db.collection("weather").createIndex({
+    cityId: 1,
+    "currentReadings.timestamp": -1,
+  });
   return db;
 }
 
@@ -73,42 +77,50 @@ const server = createServer(async (req, res) => {
         longitude: parseFloat(params.get("lon")),
       };
 
+      // Find the city in our known cities map
+      const coordKey = `${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`;
+      const cityInfo = cityCoordinatesMap.get(coordKey);
+
+      // Fetch current weather forecast
       const weather = await fetchWeather(
         config.openMeteo.current,
-        `/v1/forecast?latitude=${coords.latitude}&longitude=${coords.longitude}&current_weather=true`,
+        `/v1/forecast?latitude=${coords.latitude}&longitude=${coords.longitude}&current_weather=true&timezone=auto`,
       );
 
-      if (
-        cityCoordinatesMap.has(
-          `${coords.latitude.toFixed(6)},${coords.longitude.toFixed(6)}`,
-        )
-      ) {
-        await db.collection("weather").insertOne({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          data: weather,
-          timestamp: new Date(),
-        });
+      if (cityInfo) {
+        const timestamp = new Date();
+
+        // Extract current readings from the weather data
+        const currentReading = {
+          timestamp,
+          temperature: weather.current_weather.temperature,
+          pressure: weather.current_weather.surface_pressure,
+        };
+
+        // Update or create the city document with the new reading
+        await db.collection("weather").updateOne(
+          { cityId: cityInfo.id },
+          {
+            $setOnInsert: {
+              cityName: cityInfo.name,
+              lat: coords.latitude,
+              lon: coords.longitude,
+              historicalData: [], // Array to store historical hourly data
+            },
+            $push: {
+              currentReadings: {
+                $each: [currentReading],
+                $position: 0, // Add new readings at the start of the array
+              },
+            },
+          },
+          { upsert: true },
+        );
       }
 
       res
         .writeHead(200, { "Content-Type": "application/json" })
         .end(JSON.stringify(weather));
-      return;
-    }
-
-    if (req.url.match(/^\/api\/historicaldata\/city\/([^/]+)$/)) {
-      const cityName = decodeURIComponent(req.url.split("/").pop());
-      const data = await db.collection("weather").find({ cityName }).toArray();
-
-      if (data.length == 0) {
-        res.writeHead(404).end(JSON.stringify({ error: "City not found" }));
-        return;
-      }
-
-      res
-        .writeHead(200, { "Content-Type": "application/json" })
-        .end(JSON.stringify({ cityName, data }));
       return;
     }
 
@@ -125,17 +137,35 @@ const server = createServer(async (req, res) => {
           try {
             const data = await fetchWeather(
               config.openMeteo.historical,
-              `/v1/archive?latitude=${city.coord.lat}&longitude=${city.coord.lon}&start_date=${dateFormat(startDate)}&end_date=${dateFormat(endDate)}&hourly=temperature_2m,surface_pressure`,
+              `/v1/archive?latitude=${city.coord.lat}&longitude=${city.coord.lon}&start_date=${dateFormat(startDate)}&end_date=${dateFormat(endDate)}&hourly=temperature_2m,surface_pressure&timezone=auto`,
             );
 
-            await db.collection("weather").insertOne({
-              cityId: city.id,
-              cityName: city.name,
-              lat: city.coord.lat,
-              lon: city.coord.lon,
-              data,
-              timestamp: new Date(),
-            });
+            const historicalReadings = data.hourly.time.map(
+              (timestamp, index) => ({
+                timestamp: new Date(timestamp),
+                temperature: data.hourly.temperature_2m[index],
+                pressure: data.hourly.surface_pressure[index],
+              }),
+            );
+
+            // Update the city document with historical data
+            await db.collection("weather").updateOne(
+              { cityId: city.id },
+              {
+                $setOnInsert: {
+                  cityName: city.name,
+                  lat: city.coord.lat,
+                  lon: city.coord.lon,
+                  currentReadings: [], // Array to store current readings
+                },
+                $push: {
+                  historicalData: {
+                    $each: historicalReadings,
+                  },
+                },
+              },
+              { upsert: true },
+            );
 
             await new Promise((resolve) => setTimeout(resolve, 1000));
           } catch (error) {
@@ -149,6 +179,21 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url.match(/^\/api\/historicaldata\/city\/([^/]+)$/)) {
+      const cityName = decodeURIComponent(req.url.split("/").pop());
+      const data = await db.collection("weather").findOne({ cityName });
+
+      if (!data) {
+        res.writeHead(404).end(JSON.stringify({ error: "City not found" }));
+        return;
+      }
+
+      res
+        .writeHead(200, { "Content-Type": "application/json" })
+        .end(JSON.stringify(data));
+      return;
+    }
+
     if (req.url === "/api/historicaldata" && req.method === "DELETE") {
       const result = await db.collection("weather").deleteMany({});
       res.writeHead(200).end(JSON.stringify({ deleted: result.deletedCount }));
@@ -159,10 +204,11 @@ const server = createServer(async (req, res) => {
       .writeHead(404, { "Content-Type": "application/json" })
       .end(JSON.stringify({ error: "Not found" }));
   } catch (error) {
-    res.writeHead(error.message.includes("Invalid coordinates") ? 400 : 500),
-      { "Content-Type": "application/json" }.end(
-        JSON.stringify({ error: error.message }),
-      );
+    res
+      .writeHead(error.message.includes("Invalid coordinates") ? 400 : 500, {
+        "Content-Type": "application/json",
+      })
+      .end(JSON.stringify({ error: error.message }));
   }
 });
 
