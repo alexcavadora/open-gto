@@ -2,6 +2,7 @@ import { request, createServer } from "http";
 import { MongoClient } from "mongodb";
 import { guanajuatoCities, cityCoordinatesMap } from "./cities.js";
 import { hostname } from "os";
+import { start } from "repl";
 
 // Configuration
 const config = {
@@ -195,7 +196,7 @@ async function fetchHistoricalWeather(lat, lon, startDate, endDate) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: config.openMeteo.hist_hostname,
-      path: `${config.openMeteo.historicalBasePath}?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&hourly=temperature_2m,precipitation&timezones=auto`,
+      path: `${config.openMeteo.historicalBasePath}?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&hourly=temperature_2m,surface_pressure&timezones=auto`,
       method: "GET",
     };
 
@@ -265,11 +266,27 @@ async function storeHistoricalWeather(cityData, weatherData) {
   }
 }
 
+// Function to delete all historical data
+async function deleteAllHistoricalData() {
+  try {
+    const collection = db.collection(config.mongo.collections.historical);
+    const result = await collection.deleteMany({});
+    console.log(`Deleted ${result.deletedCount} documents from historical data.`);
+    return { success: true, deletedCount: result.deletedCount };
+  } catch (error) {
+    console.error("Error deleting all historical data:", error);
+    throw error;
+  }
+}
+
+
 // Function to fetch historical data for all cities
 async function fetchAllCitiesHistoricalData() {
   const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 7); // 7 days ago
+  const endDate = startDate;
   startDate.setFullYear(startDate.getFullYear() - 5);
-  const endDate = new Date();
+ 
 
   const startDateStr = startDate.toISOString().split("T")[0];
   const endDateStr = endDate.toISOString().split("T")[0];
@@ -301,23 +318,16 @@ async function fetchAllCitiesHistoricalData() {
   console.log("Completed historical data fetch for all cities");
 }
 
+
+
 // Fetch historical weather data from MongoDB
 async function getHistoricalData() {
   try {
-    // Imprimir todas las colecciones disponibles en la base de datos
-    const collections = await db.listCollections().toArray();
-    console.log("Colecciones disponibles:", collections.map(col => col.name));
-
-    // Acceder directamente a la colección 'historicalWeather'
     const collectionName = 'historicalWeather';
-    console.log("Usando la colección:", collectionName);
-
     // Obtener la colección específica
     const collection = db.collection(collectionName);
-
     // Buscar datos históricos
     const historicalData = await collection.find({}).toArray();
-    console.log("Datos históricos encontrados:", historicalData);
 
     return historicalData;
   } catch (error) {
@@ -325,6 +335,19 @@ async function getHistoricalData() {
     throw error;
   }
 }
+
+// Fetch historical data for a specific city by name
+async function getHistoricalDataByCityName(cityName) {
+  try {
+    const collection = db.collection(config.mongo.collections.historical);
+    const historicalData = await collection.find({ cityName }).toArray();
+    return historicalData;
+  } catch (error) {
+    console.error(`Error fetching historical data for city: ${cityName}`, error);
+    throw error;
+  }
+}
+
 
 
 // Create HTTP server
@@ -357,6 +380,41 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Failed to retrieve historical data" }));
+    }
+    return;
+  }
+
+   // Delete all historical data
+   if (req.url === "/api/historicaldata" && req.method === "DELETE") {
+    try {
+      const deleteResult = await deleteAllHistoricalData();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(deleteResult));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to delete historical data" }));
+    }
+    return;
+  }
+
+  // Fetch historical data for a specific city
+  const cityNameMatch = req.url.match(/^\/api\/historicaldata\/city\/([^/]+)$/);
+  if (cityNameMatch && req.method === "GET") {
+    const cityName = decodeURIComponent(cityNameMatch[1]);
+
+    try {
+      const cityData = await getHistoricalDataByCityName(cityName);
+      if (cityData.length === 0) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `No historical data found for city: ${cityName}` }));
+        return;
+      }
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ cityName, historicalData: cityData }));
+    } catch (error) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to retrieve historical data for the city" }));
     }
     return;
   }
@@ -471,6 +529,8 @@ const server = createServer(async (req, res) => {
           historical: "/api/fetch-historical (POST)",
           health: "/health",
           historicalData: "/api/get-historicaldata",
+          historicalDataByCity: "/api/historicaldata/city/{cityName}",
+          deleteHistoricalData: "/api/historicaldata (DELETE)",
         },
       }),
     );
