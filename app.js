@@ -45,38 +45,7 @@ function validateCoordinates(lat, lon) {
   return { valid: true, latitude, longitude };
 }
 
-// Fetch weather data as buffer
-function fetchWeatherBuffer(lat, lon) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    const req = request(
-      {
-        hostname: config.openMeteo.hostname,
-        path: `${config.openMeteo.basePath}?latitude=${lat}&longitude=${lon}&current_weather=true`,
-        method: "GET",
-        timeout: 5000,
-      },
-      (res) => {
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          if (res.statusCode !== 200) {
-            reject(new Error("API Error"));
-            return;
-          }
-          const buffer = Buffer.concat(chunks);
-          resolve({ buffer, contentType: res.headers["content-type"] });
-        });
-      },
-    );
-
-    req.on("error", (error) =>
-      reject(new Error(`Request failed: ${error.message}`)),
-    );
-    req.end();
-  });
-}
-
-// Fetch current weather from OpenMeteo
+// Fetch weather data from OpenMeteo
 function fetchWeatherData(lat, lon) {
   return new Promise((resolve, reject) => {
     const req = request(
@@ -85,41 +54,6 @@ function fetchWeatherData(lat, lon) {
         path: `${config.openMeteo.basePath}?latitude=${lat}&longitude=${lon}&current_weather=true&timezones=auto`,
         method: "GET",
         timeout: 5000,
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => (data += chunk));
-        res.on("end", () => {
-          try {
-            const json = JSON.parse(data);
-            if (res.statusCode !== 200) {
-              reject(new Error(json.reason || "API Error"));
-              return;
-            }
-            resolve(json);
-          } catch (error) {
-            reject(new Error("Failed to parse API response"));
-          }
-        });
-      },
-    );
-
-    req.on("error", (error) =>
-      reject(new Error(`Request failed: ${error.message}`)),
-    );
-    req.end();
-  });
-}
-
-// Fetch historical weather from OpenMeteo
-function fetchHistoricalWeather(lat, lon, startDate, endDate) {
-  return new Promise((resolve, reject) => {
-    const req = request(
-      {
-        hostname: config.openMeteo.historicalHostname,
-        path: `${config.openMeteo.historicalBasePath}?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&hourly=temperature_2m,precipitation&timezones=auto`,
-        method: "GET",
-        timeout: 30000,
       },
       (res) => {
         let data = "";
@@ -190,6 +124,12 @@ async function storeWeatherData(lat, lon, data, dataType = "current") {
   });
 }
 
+// Fetch complete cache data
+async function getCompleteCache() {
+  const collection = db.collection(config.mongo.collection);
+  return collection.find({}).toArray();
+}
+
 // HTTP server
 const server = createServer(async (req, res) => {
   // Enable CORS
@@ -210,42 +150,15 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Weather buffer endpoint
-  if (req.url.startsWith("/api/weather-buffer") && req.method === "GET") {
+  // Fetch all cache data
+  if (req.url === "/api/cache" && req.method === "GET") {
     try {
-      const params = new URL(req.url, `http://${req.headers.host}`)
-        .searchParams;
-      const lat = params.get("lat");
-      const lon = params.get("lon");
-
-      const validation = validateCoordinates(lat, lon);
-      if (!validation.valid) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: validation.message }));
-        return;
-      }
-
-      const { buffer, contentType } = await fetchWeatherBuffer(
-        validation.latitude,
-        validation.longitude,
-      );
-
-      res.writeHead(200, {
-        "Content-Type": contentType,
-        "Content-Length": buffer.length,
-      });
-      res.end(buffer);
+      const cacheData = await getCompleteCache();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ cache: cacheData }));
     } catch (error) {
-      const statusCode = error.message.includes("API Error") ? 502 : 500;
-      res.writeHead(statusCode, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          error:
-            process.env.NODE_ENV === "production"
-              ? "Server error"
-              : error.message,
-        }),
-      );
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to retrieve cache data" }));
     }
     return;
   }
@@ -313,52 +226,6 @@ const server = createServer(async (req, res) => {
         }),
       );
     }
-  }
-
-  // Historical data fetch endpoint
-  else if (req.url === "/api/historical" && req.method === "POST") {
-    try {
-      const startDate = new Date();
-      startDate.setFullYear(startDate.getFullYear() - 5);
-
-      // Start background fetch
-      Promise.all(
-        guanajuatoCities.map(async (city) => {
-          try {
-            const data = await fetchHistoricalWeather(
-              city.coord.lat,
-              city.coord.lon,
-              startDate.toISOString().split("T")[0],
-              new Date().toISOString().split("T")[0],
-            );
-            await storeWeatherData(
-              city.coord.lat,
-              city.coord.lon,
-              data,
-              "historical",
-            );
-          } catch (error) {
-            console.error(
-              `Failed to fetch historical data for ${city.name}:`,
-              error,
-            );
-          }
-        }),
-      );
-
-      res.writeHead(202, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          message: "Historical data fetch started",
-          note: "This process runs in the background",
-        }),
-      );
-    } catch (error) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({ error: "Failed to start historical data fetch" }),
-      );
-    }
   } else {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(
@@ -366,8 +233,7 @@ const server = createServer(async (req, res) => {
         error: "Not found",
         endpoints: {
           weather: "/api/weather?lat={latitude}&lon={longitude}",
-          weatherBuffer: "/api/weather-buffer?lat={latitude}&lon={longitude}",
-          historical: "/api/historical (POST)",
+          cache: "/api/cache",
           health: "/health",
         },
       }),
