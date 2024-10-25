@@ -6,7 +6,7 @@ services:
       - "3000:3000"
     volumes:
       - .:/app
-    command: npm start
+    command: npm run dev 
     restart: always
     depends_on:
       - mongodb
