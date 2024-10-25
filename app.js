@@ -1,104 +1,145 @@
 import { request, createServer } from "http";
-const url = process.env.MONGO_URL; // Use the environment variable
 import { MongoClient } from "mongodb";
-const client = new MongoClient(url, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
 
+const url = process.env.MONGO_URL || "mongodb://mongodb:27017/weatherData";
+const client = new MongoClient(url);
+let db;
+
+// Connect to MongoDB
 async function connectToMongo() {
   try {
     await client.connect();
     console.log("Connected successfully to MongoDB");
+    db = client.db("weatherData");
+    return db;
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
+    throw error;
   }
 }
 
-// Function to fetch weather data from OpenMeteo
-function fetchWeatherData(lat, lon, callback) {
-  const options = {
-    hostname: "api.open-meteo.com",
-    path: `/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`,
-    method: "GET",
-  };
+// Function to check cached weather data
+async function getCachedWeatherData(lat, lon) {
+  const collection = db.collection("weather");
+  // Look for data not older than 1 hour
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
-  const req = request(options, (res) => {
-    let data = "";
-    res.on("data", (chunk) => {
-      data += chunk;
-    });
-
-    res.on("end", () => {
-      console.log("Raw data from OpenMeteo:", data); // Log the raw response data
-
-      try {
-        const jsonData = JSON.parse(data); // Parse the response JSON
-        callback(null, jsonData); // Return data via callback
-      } catch (error) {
-        callback(error, null); // Handle JSON parse error
-      }
-    });
+  const cachedData = await collection.findOne({
+    lat: parseFloat(lat),
+    lon: parseFloat(lon),
+    timestamp: { $gte: oneHourAgo },
   });
 
-  req.on("error", (e) => {
-    console.error(`Problem with request: ${e.message}`);
-    callback(e, null);
-  });
-
-  req.end(); // End the request
+  return cachedData;
 }
 
-// HTTP server to handle requests
-const server = createServer((req, res) => {
+// Function to fetch weather data from OpenMeteo
+function fetchWeatherData(lat, lon) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: "api.open-meteo.com",
+      path: `/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`,
+      method: "GET",
+    };
+
+    const req = request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+
+      res.on("end", () => {
+        try {
+          const jsonData = JSON.parse(data);
+          resolve(jsonData);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    req.on("error", (error) => {
+      reject(error);
+    });
+
+    req.end();
+  });
+}
+
+// Create HTTP server
+const server = createServer(async (req, res) => {
+  // Enable CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
   if (req.method === "GET" && req.url.startsWith("/api/weather")) {
-    const urlParams = new URL(req.url, `http://${req.headers.host}`);
-    const lat = urlParams.searchParams.get("lat");
-    const lon = urlParams.searchParams.get("lon");
+    try {
+      const urlParams = new URL(req.url, `http://${req.headers.host}`);
+      const lat = urlParams.searchParams.get("lat");
+      const lon = urlParams.searchParams.get("lon");
 
-    if (!lat || !lon) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Latitude and longitude are required" }));
-      return;
-    }
-
-    // Fetch weather data from OpenMeteo
-    fetchWeatherData(lat, lon, (error, weatherData) => {
-      if (error) {
-        console.error("Error fetching from OpenMeteo:", error);
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Error fetching weather data" }));
+      if (!lat || !lon) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ error: "Latitude and longitude are required" }),
+        );
         return;
       }
 
-      // Store data in MongoDB
+      // Check cache first
+      const cachedData = await getCachedWeatherData(lat, lon);
+
+      if (cachedData) {
+        console.log("Serving cached data");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(cachedData.data));
+        return;
+      }
+
+      // If not in cache, fetch from OpenMeteo
+      console.log("Fetching fresh data from OpenMeteo");
+      const weatherData = await fetchWeatherData(lat, lon);
+
+      // Store in MongoDB
       const weatherCollection = db.collection("weather");
-      const weatherEntry = {
-        lat: lat,
-        lon: lon,
+      await weatherCollection.insertOne({
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
         data: weatherData,
         timestamp: new Date(),
-      };
-
-      weatherCollection.insertOne(weatherEntry, (err, result) => {
-        if (err) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Error storing data in MongoDB" }));
-          return;
-        }
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(weatherData)); // Return the weather data
       });
-    });
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(weatherData));
+    } catch (error) {
+      console.error("Error handling request:", error);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal server error" }));
+    }
   } else {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   }
 });
 
-// Start the server
-const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Start server
+const PORT = process.env.PORT || 3000;
+
+// Connect to MongoDB then start server
+connectToMongo()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  });
