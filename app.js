@@ -103,7 +103,6 @@ async function getCachedWeatherData(lat, lon) {
   try {
     const collection = db.collection(config.mongo.collections.current);
     const oneHourAgo = new Date(Date.now() - config.cache.duration);
-
     const cachedData = await collection.findOne({
       lat: lat,
       lon: lon,
@@ -271,7 +270,9 @@ async function deleteAllHistoricalData() {
   try {
     const collection = db.collection(config.mongo.collections.historical);
     const result = await collection.deleteMany({});
-    console.log(`Deleted ${result.deletedCount} documents from historical data.`);
+    console.log(
+      `Deleted ${result.deletedCount} documents from historical data.`,
+    );
     return { success: true, deletedCount: result.deletedCount };
   } catch (error) {
     console.error("Error deleting all historical data:", error);
@@ -279,14 +280,12 @@ async function deleteAllHistoricalData() {
   }
 }
 
-
 // Function to fetch historical data for all cities
 async function fetchAllCitiesHistoricalData() {
   const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 7); // 7 days ago
-  const endDate = startDate;
   startDate.setFullYear(startDate.getFullYear() - 5);
- 
+  const endDate = new Date(); // Current date
+  endDate.setDate(endDate.getDate() - 7); // 7 days ago
 
   const startDateStr = startDate.toISOString().split("T")[0];
   const endDateStr = endDate.toISOString().split("T")[0];
@@ -318,12 +317,10 @@ async function fetchAllCitiesHistoricalData() {
   console.log("Completed historical data fetch for all cities");
 }
 
-
-
 // Fetch historical weather data from MongoDB
 async function getHistoricalData() {
   try {
-    const collectionName = 'historicalWeather';
+    const collectionName = "historicalWeather";
     // Obtener la colección específica
     const collection = db.collection(collectionName);
     // Buscar datos históricos
@@ -343,12 +340,13 @@ async function getHistoricalDataByCityName(cityName) {
     const historicalData = await collection.find({ cityName }).toArray();
     return historicalData;
   } catch (error) {
-    console.error(`Error fetching historical data for city: ${cityName}`, error);
+    console.error(
+      `Error fetching historical data for city: ${cityName}`,
+      error,
+    );
     throw error;
   }
 }
-
-
 
 // Create HTTP server
 const server = createServer(async (req, res) => {
@@ -371,8 +369,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-   // Fetch historical data endpoint
-   if (req.url === "/api/get-historicaldata" && req.method === "GET") {
+  // Fetch historical data endpoint
+  if (req.url === "/api/get-historicaldata" && req.method === "GET") {
     try {
       const historicalData = await getHistoricalData();
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -384,8 +382,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-   // Delete all historical data
-   if (req.url === "/api/historicaldata" && req.method === "DELETE") {
+  // Delete all historical data
+  if (req.url === "/api/historicaldata" && req.method === "DELETE") {
     try {
       const deleteResult = await deleteAllHistoricalData();
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -406,7 +404,11 @@ const server = createServer(async (req, res) => {
       const cityData = await getHistoricalDataByCityName(cityName);
       if (cityData.length === 0) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `No historical data found for city: ${cityName}` }));
+        res.end(
+          JSON.stringify({
+            error: `No historical data found for city: ${cityName}`,
+          }),
+        );
         return;
       }
 
@@ -414,7 +416,11 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ cityName, historicalData: cityData }));
     } catch (error) {
       res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to retrieve historical data for the city" }));
+      res.end(
+        JSON.stringify({
+          error: "Failed to retrieve historical data for the city",
+        }),
+      );
     }
     return;
   }
