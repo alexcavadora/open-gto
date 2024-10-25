@@ -469,3 +469,7 @@ export const cityCoordinatesMap = new Map(
     city,
   ]),
 );
+
+export function getCityByName(cityName) {
+  return guanajuatoCities.find(city => city.name.toLowerCase() === cityName.toLowerCase());
+}

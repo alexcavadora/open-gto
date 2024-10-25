@@ -1,6 +1,6 @@
 import { request, createServer } from "http";
 import { MongoClient } from "mongodb";
-import { guanajuatoCities, cityCoordinatesMap } from "./cities.js";
+import { guanajuatoCities, cityCoordinatesMap, getCityByName } from "./cities.js";
 
 const config = {
   mongoUrl: process.env.MONGO_URL || "mongodb://mongodb:27017/weatherData",
@@ -119,13 +119,14 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.url === "/api/fetch-historical" && req.method === "POST") {
-      const startDate = new Date();
-      startDate.setFullYear(startDate.getFullYear() - 5);
-      const endDate = new Date();
-      endDate.setDate(endDate.getDate() - 7);
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 5);
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() - 7);
+    
+    const dateFormat = (date) => date.toISOString().split("T")[0];
 
-      const dateFormat = (date) => date.toISOString().split("T")[0];
+    if (req.url === "/api/fetch-historical" && req.method === "POST") {      
 
       Promise.all(
         guanajuatoCities.map(async (city) => {
@@ -175,11 +176,56 @@ const server = createServer(async (req, res) => {
 
     if (req.url.match(/^\/api\/historicaldata\/city\/([^/]+)$/)) {
       const cityName = decodeURIComponent(req.url.split("/").pop());
-      const data = await db.collection("weather").findOne({ cityName });
+      let data = await db.collection("weather").findOne({ cityName });
 
-      if (!data) {
-        res.writeHead(404).end(JSON.stringify({ error: "City not found" }));
-        return;
+      if (!data) { // if no data is found in the database
+        const city = getCityByName(cityName);
+
+        if (!city) { // if the city is not found
+          res.writeHead(404).end(JSON.stringify({ error: "City not found" }));
+          return;
+        }
+        try {
+          data = await fetchWeather(
+            config.openMeteo.historical,
+            `/v1/archive?latitude=${city.coord.lat}&longitude=${city.coord.lon}&start_date=${dateFormat(startDate)}&end_date=${dateFormat(endDate)}&hourly=temperature_2m,surface_pressure&timezone=auto`,
+          );
+
+          const historicalReadings = data.hourly.time.map(
+            (timestamp, index) => ({
+              timestamp: new Date(timestamp),
+              temperature: data.hourly.temperature_2m[index],
+              pressure: data.hourly.surface_pressure[index],
+            }),
+          );
+
+          await db.collection("weather").updateOne(
+            { cityId: city.id },
+            {
+              $setOnInsert: {
+                cityName: city.name,
+                lat: city.coord.lat,
+                lon: city.coord.lon,
+                currentReadings: [],
+              },
+              $push: {
+                historicalData: {
+                  $each: historicalReadings,
+                },
+              },
+            },
+            { upsert: true },
+          );
+
+          res
+          .writeHead(200, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ cityName, data }));
+          return;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`Error fetching data for ${city.name}:`, error);
+        } 
+        
       }
 
       res
@@ -193,10 +239,24 @@ const server = createServer(async (req, res) => {
       res.writeHead(200).end(JSON.stringify({ deleted: result.deletedCount }));
       return;
     }
+      
+        // Handle unknown routes
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "Not found",
+            availableEndpoints: {
+              weather: "/api/weather?lat={latitude}&lon={longitude} (GET)",
+              historical: "/api/fetch-historical (POST)",
+              health: "/health",
+              historicalDataByCity: "/api/historicaldata/city/{cityName} (PATCH)",
+              deleteHistoricalData: "/api/historicaldata (DELETE)",
+            },
+          }),
+        );
 
-    res
-      .writeHead(404, { "Content-Type": "application/json" })
-      .end(JSON.stringify({ error: "Not found" }));
+
+
   } catch (error) {
     res
       .writeHead(error.message.includes("Invalid coordinates") ? 400 : 500, {
@@ -204,6 +264,9 @@ const server = createServer(async (req, res) => {
       })
       .end(JSON.stringify({ error: error.message }));
   }
+
+
+
 });
 
 process.on("SIGTERM", () => {
