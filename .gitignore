@@ -1,4 +1,4 @@
-mongo-data
+mongodb_data
 # Logs
 logs
 *.log
