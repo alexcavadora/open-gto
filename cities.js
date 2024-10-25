@@ -461,11 +461,3 @@ export const guanajuatoCities = [
     },
   },
 ];
-
-// Create a Map for faster lookups
-export const cityCoordinatesMap = new Map(
-  guanajuatoCities.map((city) => [
-    `${city.coord.lat.toFixed(6)},${city.coord.lon.toFixed(6)}`,
-    city,
-  ]),
-);
