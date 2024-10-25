@@ -1,6 +1,7 @@
 import { request, createServer } from "http";
 import { MongoClient } from "mongodb";
 import { guanajuatoCities, cityCoordinatesMap } from "./cities.js";
+import { hostname } from "os";
 
 // Configuration
 const config = {
@@ -20,6 +21,7 @@ const config = {
     historicalDuration: 30 * 24 * 60 * 60 * 1000, // 30 days for historical data
   },
   openMeteo: {
+    hist_hostname: "archive-api.open-meteo.com",
     hostname: "api.open-meteo.com",
     basePath: "/v1/forecast",
     historicalBasePath: "/v1/archive",
@@ -192,10 +194,13 @@ function fetchWeatherData(lat, lon) {
 async function fetchHistoricalWeather(lat, lon, startDate, endDate) {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: config.openMeteo.hostname,
-      path: `${config.openMeteo.historicalBasePath}?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&hourly=temperature_2m,precipitation,windspeed_10m,winddirection_10m`,
+      hostname: config.openMeteo.hist_hostname,
+      path: `${config.openMeteo.historicalBasePath}?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&hourly=temperature_2m,precipitation&timezones=auto`,
       method: "GET",
     };
+
+    // Imprime el path en la consola
+    // console.log(`Request path: ${options.hostname}${options.path}`);
 
     const req = request(options, (res) => {
       let data = "";
