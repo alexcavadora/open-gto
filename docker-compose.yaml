@@ -2,7 +2,7 @@ services:
   api:
     build: .
     ports:
-      - "3000:3000"
+      - "3000:3000" ## Port 3000 is exposed to the host machine
     volumes:
       - .:/app
       - /app/node_modules
@@ -10,8 +10,10 @@ services:
     restart: always
     depends_on:
       - mongodb
+      - redis
     environment:
       - MONGO_URL=mongodb://mongodb:27017/weatherData
+      - REDIS_URL=redis://redis:6379
       - PORT=3000
 
   mongodb:
@@ -21,6 +23,15 @@ services:
       - "27017:27017"
     volumes:
       - ./mongodb_data:/data/db
+  redis:
+    image: redis:6.2
+    container_name: openGTO-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    command: redis-server --appendonly yes # Enable AOF persistence
 
 volumes:
   mongodb_data:
+  redis_data:
