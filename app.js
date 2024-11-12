@@ -52,6 +52,29 @@ async function connectRedis() {
 
 await connectRedis();
 
+// Constantes
+const CACHE_LIMIT = 5;
+const CITIES_LIST_KEY = 'cached_cities';
+
+// Función helper para manejar el límite de ciudades en caché
+async function manageCacheLimit(cityName) {
+  try {
+    // Añadir ciudad a la lista (o moverla al inicio si ya existe)
+    await redisClient.lRem(CITIES_LIST_KEY, 0, cityName);
+    await redisClient.lPush(CITIES_LIST_KEY, cityName);
+    
+    // Verificar si excedemos el límite
+    const listLength = await redisClient.lLen(CITIES_LIST_KEY);
+    if (listLength > CACHE_LIMIT) {
+      // Obtener y eliminar la ciudad más antigua
+      const oldestCity = await redisClient.rPop(CITIES_LIST_KEY);
+      await redisClient.del(oldestCity);
+    }
+  } catch (error) {
+    console.error('Error managing cache limit:', error);
+  }
+}
+
 // Función helper para obtener datos de Redis
 async function getFromRedis(key) {
   try {
@@ -64,9 +87,10 @@ async function getFromRedis(key) {
 }
 
 // Función helper para guardar datos en Redis
-async function saveToRedis(key, data, ttl = 3600) {
+async function saveToRedis(cityName, data, ttl = 3600) {
   try {
-    await redisClient.setEx(key, ttl, JSON.stringify(data));
+    await manageCacheLimit(cityName);
+    await redisClient.setEx(cityName, ttl, JSON.stringify(data));
   } catch (error) {
     console.error('Redis save error:', error);
   }
