@@ -28,10 +28,14 @@ services:
     container_name: openGTO-redis
     ports:
       - "6379:6379"
+
     volumes:
       - ./redis_data:/data
-    #command: redis-server --appendonly yes # Enable AOF persistence
+
+    command: redis-server --appendonly no --save "" 
+    # Disable AOF persistence
+    
 
 volumes:
   mongodb_data:
-  redis_data:
+  # redis_data:
