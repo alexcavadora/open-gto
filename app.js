@@ -66,10 +66,10 @@ async function manageCacheLimit(cityName) {
     // Verificar si excedemos el límite
     const listLength = await redisClient.lLen(CITIES_LIST_KEY);
     // Impresión de las ciudades en caché
-    const keys = await redisClient.lRange(CITIES_LIST_KEY, 0, -1);
+    const keys = await redisClient.lRange(CITIES_LIST_KEY, 0, CACHE_LIMIT-1);
     console.log('Cached cities:', keys);
-    console.log('Cache length:', listLength);
-    if (listLength == CACHE_LIMIT) {
+    //console.log('Cache length:', listLength);
+    if (listLength > CACHE_LIMIT) {
       // Obtener y eliminar la ciudad más antigua
       const oldestCity = await redisClient.rPop(CITIES_LIST_KEY);
       await redisClient.lRem(CITIES_LIST_KEY,0 ,oldestCity); 
@@ -218,6 +218,9 @@ const server = createServer(async (req, res) => {
 
         if (data) {
             console.log(`Fetching historical data for ${cityName} from Redis`);
+            await redisClient.lRem(CITIES_LIST_KEY, 0, cityName); // Eliminar la ciudad si ya existe
+            await redisClient.lPush(CITIES_LIST_KEY, cityName); // Añadir la ciudad al inicio de la lista
+
         } else {
             // If not found in Redis, check MongoDB
             data = await db.collection("weather").findOne({ cityName });
