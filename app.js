@@ -21,7 +21,14 @@ const client = new MongoClient(config.mongoUrl);
 let db; 
 
 async function connectDB() {
-  await client.connect();
+  await client.connect(config.mongoUrl, {
+    logger: {
+      debug: () => {}, // Desactiva logs debug
+      warn: () => {},  // Desactiva logs warn
+      info: () => {},  // Desactiva logs info
+      error: console.error, // Mantiene solo errores
+    }
+  });
   db = client.db("weatherData");
   await db.collection("weather").createIndex({
     cityId: 1, // Indexamos por cityId
@@ -220,6 +227,8 @@ const server = createServer(async (req, res) => {
             console.log(`Fetching historical data for ${cityName} from Redis`);
             await redisClient.lRem(CITIES_LIST_KEY, 0, cityName); // Eliminar la ciudad si ya existe
             await redisClient.lPush(CITIES_LIST_KEY, cityName); // Añadir la ciudad al inicio de la lista
+            const keys = await redisClient.lRange(CITIES_LIST_KEY, 0, CACHE_LIMIT-1);
+            console.log('Cached cities:', keys);
 
         } else {
             // If not found in Redis, check MongoDB

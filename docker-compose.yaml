@@ -21,6 +21,9 @@ services:
     container_name: openGTO-mongodb
     ports:
       - "27017:27017"
+    command: ["mongod", "--quiet", "--logpath", "/dev/null"]
+    # O ajustar el nivel de log
+    # command: ["mongod", "--setParameter", "logLevel=0"]
     volumes:
       - ./mongodb_data:/data/db
   redis:
